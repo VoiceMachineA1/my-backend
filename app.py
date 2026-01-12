@@ -1,8 +1,10 @@
 """
-Nightly / Dentist Office Twilio IVR Backend (FastAPI + Twilio) — KEYPAD-ONLY v2 (Prompt rewrite)
+Nightly / Dentist Office Twilio IVR Backend (FastAPI + Twilio) — KEYPAD-ONLY v2 (Prompt rewrite + SMS disclosure)
 
-This version is identical in logic to your KEYPAD-ONLY v2, but ALL spoken menus/submenus
-are rewritten to consistently follow: “Press X to …” in the exact order of options.
+This version is identical in logic to your KEYPAD-ONLY v2, but:
+- ALL spoken menus/submenus use consistent “Press X to …” wording
+- ALL outbound SMS messages (to caller and to office manager) include:
+  “Messaging and data rates may apply.”
 
 REQUIRED ENV VARS (Render dashboard -> Environment)
 - TWILIO_ACCOUNT_SID
@@ -45,6 +47,9 @@ MAX_VOICEMAIL_SECONDS = 180
 
 # Office notification target (SMS)
 OFFICE_MANAGER_NUMBER = os.getenv("OFFICE_MANAGER_NUMBER", "").strip()
+
+# SMS disclosure appended to all outbound SMS messages
+SMS_DISCLOSURE = " Messaging and data rates may apply."
 
 # ============
 # Call state
@@ -350,6 +355,7 @@ async def emergency_route_handle(request: Request):
             f"Pain (1-9): {pain}\n"
             f"Swelling/Bleeding/Trauma: {symptoms_text}\n"
             f"Action: Please call back ASAP."
+            f"{SMS_DISCLOSURE}"
         )
         ok, err = notify_office_safe(msg)
         print("Emergency notify:", "OK" if ok else "FAILED", "|", err)
@@ -460,11 +466,12 @@ async def business_appointments_handle(request: Request):
     vr = VoiceResponse()
 
     if digit == "1":
-        # Callback request
+        # Callback request (office manager SMS)
         msg = (
             f"{PRACTICE_NAME} — After-hours APPOINTMENT callback request\n"
             f"Caller: {from_number}\n"
             f"Action: Please contact at earliest operating hours."
+            f"{SMS_DISCLOSURE}"
         )
         ok, err = notify_office_safe(msg)
         print("Appt callback notify:", "OK" if ok else "FAILED", "|", err)
@@ -476,20 +483,21 @@ async def business_appointments_handle(request: Request):
         return Response(content=str(vr), media_type="application/xml")
 
     if digit == "2":
-        # Send scheduling link to caller
+        # Send scheduling link to caller (caller SMS)
         vr.say("A scheduling link will be sent by text message now.", voice="alice")
 
         ok, err = send_sms_safe(
             from_number,
-            f"Book an appointment with {PRACTICE_NAME}: {SCHEDULING_LINK}",
+            f"Book an appointment with {PRACTICE_NAME}: {SCHEDULING_LINK}.{SMS_DISCLOSURE}",
         )
         print("Scheduling link SMS to caller:", "OK" if ok else "FAILED", "|", err)
 
-        # Also notify office (optional)
+        # Also notify office (office manager SMS)
         msg = (
             f"{PRACTICE_NAME} — After-hours APPOINTMENT link sent\n"
             f"Caller: {from_number}\n"
             f"Action: Scheduling link was sent."
+            f"{SMS_DISCLOSURE}"
         )
         ok2, err2 = notify_office_safe(msg)
         print("Appt link notify office:", "OK" if ok2 else "FAILED", "|", err2)
@@ -578,7 +586,7 @@ async def business_general_handle(request: Request):
         vr.say("Directions will be sent by text message now.", voice="alice")
         ok, err = send_sms_safe(
             from_number,
-            f"Directions to {PRACTICE_NAME}: {DIRECTIONS_LINK}",
+            f"Directions to {PRACTICE_NAME}: {DIRECTIONS_LINK}.{SMS_DISCLOSURE}",
         )
         print("Directions SMS to caller:", "OK" if ok else "FAILED", "|", err)
 
@@ -586,6 +594,7 @@ async def business_general_handle(request: Request):
             f"{PRACTICE_NAME} — After-hours DIRECTIONS requested\n"
             f"Caller: {from_number}\n"
             f"Action: Directions link sent."
+            f"{SMS_DISCLOSURE}"
         )
         ok2, err2 = notify_office_safe(msg)
         print("Directions notify office:", "OK" if ok2 else "FAILED", "|", err2)
@@ -685,7 +694,7 @@ async def recording_complete(request: Request):
         lines.insert(2, f"Pain (1-9): {pain}")
         lines.insert(3, f"Swelling/Bleeding/Trauma: {symptoms_text}")
 
-    msg = "\n".join(lines)
+    msg = "\n".join(lines) + SMS_DISCLOSURE
     ok, err = notify_office_safe(msg)
     print("Voicemail notify office:", "OK" if ok else "FAILED", "|", err)
 
