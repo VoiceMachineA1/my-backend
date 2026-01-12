@@ -1,29 +1,8 @@
 """
-Nightly / Dentist Office Twilio IVR Backend (FastAPI + Twilio) — KEYPAD-ONLY v2
+Nightly / Dentist Office Twilio IVR Backend (FastAPI + Twilio) — KEYPAD-ONLY v2 (Prompt rewrite)
 
-WHAT THIS VERSION ADDS (based on your desired order)
-1) 911 Disclaimer (always first)
-2) Emergency vs Non-emergency gate
-   - Emergency flow collects:
-     2.1 Pain level (1–9)
-     2.2 Swelling/bleeding/trauma? (Yes/No)
-     2.3 Press 1 to notify team w/ answers OR press 2 to record voicemail
-3) Business menu (Appointments / Billing / General info)
-   - Appointments submenu:
-     1) Request callback at earliest operating hours
-     2) Send scheduling link
-     3) Leave voicemail
-   - Billing: voicemail
-   - General info: read hours + directions link OR voicemail
-4) Universal end prompt after each branch:
-   “You may hang up now, or press 1 to return to the main menu, or press 2 to return
-    to scheduling, billing, and general information.”
-
-NOTES
-- Keypad-only (DTMF) for reliability
-- In-memory CALL_STATE for v1. Good for launch/testing; later replace with SQLite/Postgres.
-- SMS notifications are sent to OFFICE_MANAGER_NUMBER (set in Render env vars).
-- SMS sending is SAFE (never throws), so Twilio won't play "application error" due to SMS failures.
+This version is identical in logic to your KEYPAD-ONLY v2, but ALL spoken menus/submenus
+are rewritten to consistently follow: “Press X to …” in the exact order of options.
 
 REQUIRED ENV VARS (Render dashboard -> Environment)
 - TWILIO_ACCOUNT_SID
@@ -154,8 +133,8 @@ def _end_options(vr: VoiceResponse, intro: str = "") -> VoiceResponse:
     )
     gather.say(
         "You may hang up now. "
-        "Or press 1 to return to the main menu. "
-        "Or press 2 to return to scheduling, billing, and general information.",
+        "Press 1 to return to the main menu. "
+        "Press 2 to return to scheduling, billing or insurance, and general practice information.",
         voice="alice",
     )
     vr.append(gather)
@@ -189,13 +168,13 @@ async def twilio_voice(request: Request):
     """
     vr = VoiceResponse()
 
-    # 1) 911 disclaimer
+    # 1) 911 disclaimer (always first)
     vr.say(
         "If this is a life threatening emergency, please hang up and dial 9 1 1.",
         voice="alice",
     )
 
-    # 2) Emergency vs business gate
+    # 2) Emergency vs business gate (Press X to...)
     gather = Gather(
         num_digits=1,
         action="/twilio/gate",
@@ -203,8 +182,8 @@ async def twilio_voice(request: Request):
         timeout=7,
     )
     gather.say(
-        "If you are experiencing a dental emergency, press 1. "
-        "If you are calling about scheduling, billing or insurance, or general information, press 2.",
+        "Press 1 if you are experiencing a dental emergency. "
+        "Press 2 if you are calling about scheduling, billing or insurance, or general practice information.",
         voice="alice",
     )
     vr.append(gather)
@@ -255,8 +234,10 @@ async def emergency_pain(request: Request):
     vr = VoiceResponse()
     gather = Gather(num_digits=1, action="/twilio/emergency/pain-save", method="POST", timeout=7)
     gather.say(
-        "Please enter the pain level you are currently experiencing. "
-        "1 being lowest pain, 9 being highest pain.",
+        "Please enter your current pain level. "
+        "Press a number from 1 to 9. "
+        "Press 1 for the lowest pain. "
+        "Press 9 for the highest pain.",
         voice="alice",
     )
     vr.append(gather)
@@ -279,7 +260,7 @@ async def emergency_pain_save(request: Request):
     vr = VoiceResponse()
 
     if pain is None or pain < 1 or pain > 9:
-        vr.say("Please enter a number from 1 to 9.", voice="alice")
+        vr.say("Invalid entry. Please press a number from 1 to 9.", voice="alice")
         vr.redirect("/twilio/emergency/pain", method="POST")
         return Response(content=str(vr), media_type="application/xml")
 
@@ -293,8 +274,8 @@ async def emergency_symptoms(request: Request):
     vr = VoiceResponse()
     gather = Gather(num_digits=1, action="/twilio/emergency/symptoms-save", method="POST", timeout=7)
     gather.say(
-        "Are you experiencing swelling, bleeding, or trauma to the dental region? "
-        "Press 1 for yes. Press 2 for no.",
+        "Press 1 if you are experiencing swelling, bleeding, or trauma to the dental region. "
+        "Press 2 if you are not.",
         voice="alice",
     )
     vr.append(gather)
@@ -317,7 +298,7 @@ async def emergency_symptoms_save(request: Request):
     vr = VoiceResponse()
 
     if yn is None:
-        vr.say("Please press 1 for yes or 2 for no.", voice="alice")
+        vr.say("Invalid entry. Press 1 for yes. Press 2 for no.", voice="alice")
         vr.redirect("/twilio/emergency/symptoms", method="POST")
         return Response(content=str(vr), media_type="application/xml")
 
@@ -334,9 +315,8 @@ async def emergency_route(request: Request):
     vr = VoiceResponse()
     gather = Gather(num_digits=1, action="/twilio/emergency/route-handle", method="POST", timeout=7)
     gather.say(
-        "Please press 1 to send your answers to the first available team member. "
-        "Or press 2 to record a voicemail to further explain your symptoms, "
-        "and the first available team member will respond with guidance.",
+        "Press 1 to send your answers to the first available team member. "
+        "Press 2 to record a voicemail to further explain your symptoms.",
         voice="alice",
     )
     vr.append(gather)
@@ -374,16 +354,19 @@ async def emergency_route_handle(request: Request):
         ok, err = notify_office_safe(msg)
         print("Emergency notify:", "OK" if ok else "FAILED", "|", err)
 
-        _end_options(vr, intro="Thank you. Your answers have been sent to the first available team member.")
+        _end_options(
+            vr,
+            intro="Your emergency intake information has been sent to the first available team member.",
+        )
         return Response(content=str(vr), media_type="application/xml")
 
     if digit == "2":
         # Record voicemail; pass intent and context in query params
         vr.say(
             "Please leave a voicemail after the tone. "
-            "Please include your name and best callback number. "
+            "Please include your name and your callback number. "
             "Please do not include sensitive medical details. "
-            "When you're done, you can hang up.",
+            "When you are finished, you may hang up.",
             voice="alice",
         )
         vr.record(
@@ -410,9 +393,9 @@ async def business_menu(request: Request):
     vr = VoiceResponse()
     gather = Gather(num_digits=1, action="/twilio/business/menu-handle", method="POST", timeout=7)
     gather.say(
-        "Please press 1 for appointments. "
-        "Please press 2 for billing or insurance. "
-        "Please press 3 for general practice information.",
+        "Press 1 for appointments. "
+        "Press 2 for billing or insurance. "
+        "Press 3 for general practice information.",
         voice="alice",
     )
     vr.append(gather)
@@ -452,10 +435,9 @@ async def business_appointments(request: Request):
     vr = VoiceResponse()
     gather = Gather(num_digits=1, action="/twilio/business/appointments-handle", method="POST", timeout=7)
     gather.say(
-        "For appointments: "
-        "Press 1 if you would like to be contacted regarding scheduling at the earliest operating hours of the business. "
-        "Press 2 if you would like to be sent a scheduling link. "
-        "If you would like to leave a voicemail, press 3.",
+        "Press 1 to request a callback at the earliest operating hours. "
+        "Press 2 to receive a scheduling link by text message. "
+        "Press 3 to leave a voicemail about scheduling.",
         voice="alice",
     )
     vr.append(gather)
@@ -487,20 +469,23 @@ async def business_appointments_handle(request: Request):
         ok, err = notify_office_safe(msg)
         print("Appt callback notify:", "OK" if ok else "FAILED", "|", err)
 
-        _end_options(vr, intro="Thank you. We will contact you at the earliest operating hours.")
+        _end_options(
+            vr,
+            intro="Your callback request has been sent. We will contact you at the earliest operating hours.",
+        )
         return Response(content=str(vr), media_type="application/xml")
 
     if digit == "2":
         # Send scheduling link to caller
-        vr.say("Okay. We'll text you a scheduling link now.", voice="alice")
+        vr.say("A scheduling link will be sent by text message now.", voice="alice")
 
         ok, err = send_sms_safe(
             from_number,
-            f"Book an appointment with {PRACTICE_NAME}: {SCHEDULING_LINK}"
+            f"Book an appointment with {PRACTICE_NAME}: {SCHEDULING_LINK}",
         )
         print("Scheduling link SMS to caller:", "OK" if ok else "FAILED", "|", err)
 
-        # Also notify office (optional, but helpful for counting)
+        # Also notify office (optional)
         msg = (
             f"{PRACTICE_NAME} — After-hours APPOINTMENT link sent\n"
             f"Caller: {from_number}\n"
@@ -518,8 +503,10 @@ async def business_appointments_handle(request: Request):
     if digit == "3":
         # Voicemail for appointment
         vr.say(
-            "Please leave a voicemail regarding scheduling that includes your name and phone number. "
-            "When you're done, you can hang up.",
+            "Please leave a voicemail about scheduling. "
+            "Include your name and your callback number. "
+            "Please do not include sensitive medical details. "
+            "When you are finished, you may hang up.",
             voice="alice",
         )
         vr.record(
@@ -540,8 +527,10 @@ async def business_appointments_handle(request: Request):
 async def business_billing_voicemail(request: Request):
     vr = VoiceResponse()
     vr.say(
-        "Please leave a voicemail regarding your billing and insurance that includes your name and phone number. "
-        "When you're done, you can hang up.",
+        "Please leave a voicemail about billing or insurance. "
+        "Include your name and your callback number. "
+        "Please do not include sensitive medical details. "
+        "When you are finished, you may hang up.",
         voice="alice",
     )
     vr.record(
@@ -561,8 +550,8 @@ async def business_general_info(request: Request):
 
     gather = Gather(num_digits=1, action="/twilio/business/general-handle", method="POST", timeout=7)
     gather.say(
-        "If you would like to be sent directions on how to travel to the office, press 1. "
-        "If you have a general inquiry, press 2 to record a voicemail.",
+        "Press 1 to receive directions by text message. "
+        "Press 2 to leave a voicemail with a general question.",
         voice="alice",
     )
     vr.append(gather)
@@ -586,10 +575,10 @@ async def business_general_handle(request: Request):
     vr = VoiceResponse()
 
     if digit == "1":
-        vr.say("Okay. We'll text you directions now.", voice="alice")
+        vr.say("Directions will be sent by text message now.", voice="alice")
         ok, err = send_sms_safe(
             from_number,
-            f"Directions to {PRACTICE_NAME}: {DIRECTIONS_LINK}"
+            f"Directions to {PRACTICE_NAME}: {DIRECTIONS_LINK}",
         )
         print("Directions SMS to caller:", "OK" if ok else "FAILED", "|", err)
 
@@ -602,15 +591,17 @@ async def business_general_handle(request: Request):
         print("Directions notify office:", "OK" if ok2 else "FAILED", "|", err2)
 
         if ok:
-            _end_options(vr, intro="Directions text sent.")
+            _end_options(vr, intro="Text sent.")
         else:
             _end_options(vr, intro="We could not send directions by text right now.")
         return Response(content=str(vr), media_type="application/xml")
 
     if digit == "2":
         vr.say(
-            "Please leave a voicemail with your general inquiry that includes your name and phone number. "
-            "When you're done, you can hang up.",
+            "Please leave a voicemail with your general question. "
+            "Include your name and your callback number. "
+            "Please do not include sensitive medical details. "
+            "When you are finished, you may hang up.",
             voice="alice",
         )
         vr.record(
@@ -699,5 +690,5 @@ async def recording_complete(request: Request):
     print("Voicemail notify office:", "OK" if ok else "FAILED", "|", err)
 
     vr = VoiceResponse()
-    _end_options(vr, intro="Thanks. Your message has been recorded.")
+    _end_options(vr, intro="Your message has been recorded.")
     return Response(content=str(vr), media_type="application/xml")
